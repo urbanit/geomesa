@@ -29,70 +29,77 @@ import org.locationtech.geomesa.utils.io.WithClose
 import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+import com.typesafe.scalalogging.LazyLogging
 
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
-class CassandraSparkProviderTest extends Specification {
+class CassandraSparkProviderTest extends Specification with LazyLogging {
 
   sequential
 
   var storage: Path = _
-  var params: Map[String, String] = _
+  var dsParams: Map[String, String] = _
   var ds: CassandraDataStore = _
 
-  var sc: SparkContext = _
   var spark: SparkSession = _
+  var sc: SparkContext = _
   var sql: SQLContext = _
+  var sParams: Map[String, String] = _
 
   step {
-    // cassandra database set up
+
+    // initialize spark
+    spark = org.locationtech.geomesa.spark.SparkSQLTestUtils.createSparkSession()
+    sc = spark.sparkContext
+    sql = spark.sqlContext
+
+    //initialize cassandra
     storage = Files.createTempDirectory("cassandra")
-
     System.setProperty("cassandra.storagedir", storage.toString)
-
     EmbeddedCassandraServerHelper.startEmbeddedCassandra("cassandra-config.yaml", 1200000L)
-
     var readTimeout: Int = SystemProperty("cassandraReadTimeout", "12000").get.toInt
-
     if (readTimeout < 0) {
       readTimeout = 12000
     }
     val host = EmbeddedCassandraServerHelper.getHost
     val port = EmbeddedCassandraServerHelper.getNativeTransportPort
     val cluster = new Cluster.Builder().addContactPoints(host).withPort(port)
-      .withSocketOptions(new SocketOptions().setReadTimeoutMillis(readTimeout)).build().init()
+        .withSocketOptions(new SocketOptions().setReadTimeoutMillis(readTimeout)).build().init()
     val session = cluster.connect()
     val cqlDataLoader = new CQLDataLoader(session)
     cqlDataLoader.load(new ClassPathCQLDataSet("init.cql", false, false))
 
-    // add parameters to point to Cassandra
-    params = Map(
+    var keyspace: String = "geomesa_cassandra";
+    var catalog: String = "test_sft";
+
+    // datastore
+    dsParams = Map(
+      "geomesa.cassandra.host" -> s"$host",
       Params.ContactPointParam.getName -> s"$host:$port",
-      Params.KeySpaceParam.getName -> "geomesa_cassandra",
-      Params.CatalogParam.getName -> "test_sft",
-      "geomesa.cassandra.host" -> s"$host"
+      Params.KeySpaceParam.getName -> keyspace,
+      Params.CatalogParam.getName -> catalog
     )
-    ds = DataStoreFinder.getDataStore(params).asInstanceOf[CassandraDataStore]
+    ds = DataStoreFinder.getDataStore(dsParams).asInstanceOf[CassandraDataStore]
 
-    spark = org.locationtech.geomesa.spark.SparkSQLTestUtils.createSparkSession()
-    sc = spark.sparkContext
-    sql = spark.sqlContext
+    // spark
+    sParams =  Map(
+      "geomesa.cassandra.host" -> s"$host",
+      Params.KeySpaceParam.getName -> keyspace,
+      "cassandra.catalog" -> catalog
+    )
 
+    //ingest data
     SparkSQLTestUtils.ingestChicago(ds)
 
     val df = spark.read
       .format("geomesa")
-      .options(params)
+      .options(dsParams)
       .option("geomesa.feature", "chicago")
       .load()
-//    logger.debug(df.schema.treeString)
+
+    logger.debug(df.schema.treeString)
     df.createOrReplaceTempView("chicago")
-    // Spark set up
-//    val conf = new SparkConf().setMaster("local[2]").setAppName("testSpark")
-//    conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-//    conf.set("spark.kryo.registrator", classOf[GeoMesaSparkKryoRegistrator].getName)
-//    sc = SparkContext.getOrCreate(conf)
   }
 
   // Define feature schema
@@ -112,46 +119,46 @@ class CassandraSparkProviderTest extends Specification {
 
   "The CassandraSpatialRDDProvider" should {
     "read from the embedded Cassandra database" in {
-      val ds = DataStoreFinder.getDataStore(params)
+      // val ds = DataStoreFinder.getDataStore(params)
       ds.createSchema(chicagoSft)
+
       WithClose(ds.getFeatureWriterAppend("chicago", Transaction.AUTO_COMMIT)) { writer =>
         chicagoFeatures.take(3).foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
       }
 
-      val rdd = GeoMesaSpark(params).rdd(new Configuration(), sc, params, new Query("chicago"))
+      val rdd = GeoMesaSpark(sParams).rdd(new Configuration(), sc, dsParams, new Query("chicago"))
       rdd.count() mustEqual 3l
     }
 
-    "write to the embedded Cassandra database" in {
-      val ds = DataStoreFinder.getDataStore(params)
-      ds.createSchema(chicagoSft)
-      val writeRdd = sc.parallelize(chicagoFeatures)
-      GeoMesaSpark(params).save(writeRdd, params, "chicago")
-      // verify write
-      val readRdd = GeoMesaSpark(params).rdd(new Configuration(), sc, params, new Query("chicago"))
-      readRdd.count() mustEqual 6l
-    }
+     "write to the embedded Cassandra database" in {
+       val writeRdd = sc.parallelize(chicagoFeatures)
+       GeoMesaSpark(sParams).save(writeRdd, dsParams, "chicago")
+       val readRdd = GeoMesaSpark(sParams).rdd(new Configuration(), sc, dsParams, new Query("chicago"))
+       readRdd.count() mustEqual 6l
+     }
 
-    "select by secondary indexed attribute" >> {
-      val df = spark.read
-        .format("geomesa")
-        .options(params)
-        .option("geomesa.feature", "chicago")
-        .load()
-      val cases = df.select("case_number").where("case_number = 1").collect().map(_.getInt(0))
-      cases.length mustEqual 1
-    }
+      "select by secondary indexed attribute" >> {
+         
+            val dfi = spark.read
+                      .format("geomesa")
+                      .options(dsParams)
+                      .option("geomesa.feature", "chicago")
+                      .load()
 
-    "complex st_buffer" >> {
-      val buf = sql.sql("select st_asText(st_bufferPoint(geom,10)) from chicago where case_number = 1").collect().head.getString(0)
-      sql.sql(
-        s"""
-           |select *
-           |from chicago
-           |where
-           |  st_contains(st_geomFromWKT('$buf'), geom)
-         """.stripMargin
-      ).collect().length must beEqualTo(1)
-    }
+        val cases = dfi.select("case_number").where("case_number = 1").collect().map(_.getInt(0))
+        cases.length mustEqual 1
+      }
+
+     "complex st_buffer" >> {
+        val buf = sql.sql("select st_asText(st_bufferPoint(geom,10)) from chicago where case_number = 1").collect().head.getString(0)
+        sql.sql(
+          s"""
+             |select *
+             |from chicago
+             |where
+             |  st_contains(st_geomFromWKT('$buf'), geom)
+           """.stripMargin
+        ).collect().length must beEqualTo(1)
+     }
   }
 }
