@@ -318,6 +318,49 @@ class CassandraDataStoreTest extends Specification with BeforeAfterAll {
       testQuery(ds, typeName, "dtg BEFORE 2014-01-05T12:00:00.000Z", null, toAdd.take(5))
     }
 
+    "support uuid-encoded feature ids" in {
+      val typeName = "testuuids"
+
+      ds.getSchema(typeName) must beNull
+
+      ds.createSchema(SimpleFeatureTypes.createType(typeName,
+        "name:String:index=true,dtg:Date,*geom:Point:srid=4326;geomesa.fid.uuid=true"))
+
+      val sft = ds.getSchema(typeName)
+
+      // include uuids with bytes that aren't valid utf-8
+      val ids = Seq(
+        "2f1c3d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+        "9b8a7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "ffffffff-ffff-4fff-bfff-ffffffffffff",
+        "00000000-0000-4000-8000-000000000000"
+      )
+
+      val toAdd = ids.zipWithIndex.map { case (id, i) =>
+        val sf = ScalaSimpleFeature.create(sft, id, s"name$i", f"2014-01-${i + 1}%02dT00:00:01.000Z", s"POINT(4$i 5$i)")
+        sf.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
+        sf: SimpleFeature
+      }
+
+      val fs = ds.getFeatureSource(typeName).asInstanceOf[SimpleFeatureStore]
+      fs.addFeatures(new ListFeatureCollection(sft, toAdd.asJava)).asScala.map(_.getID) must containTheSameElementsAs(ids)
+
+      // query each index
+      testQuery(ds, typeName, "INCLUDE", null, toAdd)
+      testQuery(ds, typeName, s"IN('${ids(0)}', '${ids(2)}')", null, Seq(toAdd(0), toAdd(2)))
+      testQuery(ds, typeName, "name = 'name1'", null, Seq(toAdd(1)))
+      testQuery(ds, typeName, "bbox(geom,38,48,52,62)", null, toAdd)
+      testQuery(ds, typeName, "bbox(geom,38,48,52,62) and dtg DURING 2014-01-01T00:00:00.000Z/2014-01-08T12:00:00.000Z", null, toAdd)
+
+      // deletes have to remove the rows from each index
+      fs.removeFeatures(ECQL.toFilter(s"IN('${ids(1)}')"))
+      val remaining = toAdd.filterNot(_.getID == ids(1))
+      testQuery(ds, typeName, "INCLUDE", null, remaining)
+      testQuery(ds, typeName, s"IN('${ids(1)}')", null, Seq.empty)
+      testQuery(ds, typeName, "name = 'name1'", null, Seq.empty)
+      testQuery(ds, typeName, "bbox(geom,38,48,52,62) and dtg DURING 2014-01-01T00:00:00.000Z/2014-01-08T12:00:00.000Z", null, remaining)
+    }
+
     "delete schemas" in {
       val typeName = "testdelete"
 

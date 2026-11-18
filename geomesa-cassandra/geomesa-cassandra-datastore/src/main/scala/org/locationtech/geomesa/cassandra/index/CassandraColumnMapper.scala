@@ -52,8 +52,25 @@ trait CassandraColumnMapper {
   import CassandraColumnMapper.SimpleFeatureColumnName
 
   def columns: Seq[NamedColumn]
-  def bind(value: SingleRowKeyValue[_]): Seq[AnyRef]
-  def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef]
+
+  /**
+   * Get the values to bind to an insert statement
+   *
+   * @param value row key value
+   * @param fid feature id, as stored in the feature id column. Note that this is the decoded feature id and not
+   *            the raw id bytes, which aren't valid UTF-8 for some encodings (i.e. uuids)
+   * @return
+   */
+  def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef]
+
+  /**
+   * Get the values to bind to a delete statement
+   *
+   * @param value row key value
+   * @param fid feature id, as stored in the feature id column
+   * @return
+   */
+  def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef]
 
   def select(range: ScanRange[_], tieredKeyRanges: Seq[ByteRange]): Seq[RowSelect]
 

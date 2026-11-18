@@ -14,7 +14,6 @@ import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.index.attribute.AttributeIndexKey
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 object SharedAttributeColumnMapper extends CassandraColumnMapper {
 
@@ -26,18 +25,16 @@ object SharedAttributeColumnMapper extends CassandraColumnMapper {
 
   override val columns: Seq[NamedColumn] = Seq(Index, Value, Secondary, FeatureId, Feature)
 
-  override def bind(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val AttributeIndexKey(i, v, _) = value.key
     val secondary = ByteBuffer.wrap(value.tier)
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     val Seq(feature) = value.values.map(v => ByteBuffer.wrap(v.value))
     Seq(Short.box(i), v, secondary, fid, feature)
   }
 
-  override def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val AttributeIndexKey(i, v, _) = value.key
     val secondary = ByteBuffer.wrap(value.tier)
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     Seq(Short.box(i), v, secondary, fid)
   }
 

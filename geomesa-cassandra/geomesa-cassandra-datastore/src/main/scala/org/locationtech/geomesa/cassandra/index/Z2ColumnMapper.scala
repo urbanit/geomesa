@@ -13,7 +13,6 @@ import org.locationtech.geomesa.cassandra.{ColumnSelect, NamedColumn, RowSelect}
 import org.locationtech.geomesa.index.api._
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 object Z2ColumnMapper {
 
@@ -40,18 +39,16 @@ class Z2ColumnMapper(shards: Seq[ColumnSelect]) extends CassandraColumnMapper {
 
   override val columns: Seq[NamedColumn] = Seq(Shard, ZValue, FeatureId, Feature)
 
-  override def bind(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val z = Long.box(value.key.asInstanceOf[Long])
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     val Seq(feature) = value.values.map(v => ByteBuffer.wrap(v.value))
     Seq(shard, z, fid, feature)
   }
 
-  override def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val z = Long.box(value.key.asInstanceOf[Long])
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     Seq(shard, z, fid)
   }
 

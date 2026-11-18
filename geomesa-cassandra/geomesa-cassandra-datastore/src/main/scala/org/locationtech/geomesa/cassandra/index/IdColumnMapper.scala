@@ -16,7 +16,6 @@ import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.utils.cache.CacheKeyGenerator
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 object IdColumnMapper {
 
@@ -38,14 +37,13 @@ class IdColumnMapper(idFromBytes: (Array[Byte], Int, Int, SimpleFeature) => Stri
 
   override val columns: Seq[NamedColumn] = Seq(FeatureId, Feature)
 
-  override def bind(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
-    val fid = new String(value.id, StandardCharsets.UTF_8)
+  override def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val Seq(feature) = value.values.map(v => ByteBuffer.wrap(v.value))
     Seq(fid, feature)
   }
 
-  override def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
-    Seq(new String(value.id, StandardCharsets.UTF_8))
+  override def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
+    Seq(fid)
   }
 
   override def select(range: ScanRange[_], tieredKeyRanges: Seq[ByteRange]): Seq[RowSelect] = {

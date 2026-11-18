@@ -32,7 +32,6 @@ import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.index.ByteArrays
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[CassandraDataStore] with StrictLogging {
 
@@ -186,23 +185,17 @@ object CassandraIndexAdapter extends LazyLogging {
 
     def this() = this(null, null) // no-arg constructor required for serialization
 
-    private var idSerializer: (Array[Byte], Int, Int, SimpleFeature) => String = _
-
     override def apply(result: Row): SimpleFeature = {
-      val fid = {
-        val bytes = result.get(FeatureIdColumnName, classOf[String]).getBytes(StandardCharsets.UTF_8)
-        idSerializer.apply(bytes, 0, bytes.length, null)
-      }
+      // the feature id column stores the decoded feature id (see CassandraIndexWriter)
+      val fid = result.getString(FeatureIdColumnName)
       val sf = result.getByteBuffer(SimpleFeatureColumnName)
       val bytes = Array.ofDim[Byte](sf.limit())
       sf.get(bytes)
       serializer.deserialize(fid, bytes)
     }
 
-    override protected def createSerializer: KryoFeatureSerializer = {
-      idSerializer = GeoMesaFeatureIndex.idFromBytes(index.sft)
+    override protected def createSerializer: KryoFeatureSerializer =
       KryoFeatureSerializer(index.sft, SerializationOption.builder.`lazy`.withoutId.build())
-    }
   }
 
   class CassandraIndexWriter(
@@ -221,21 +214,26 @@ object CassandraIndexAdapter extends LazyLogging {
       (mapper, insert, delete)
     }
 
+    // the feature id column stores the decoded feature id - the raw id bytes may not be valid UTF-8 (i.e. for uuids),
+    // and decoding them the same way as queries ensures that the stored id matches id lookups
+    private lazy val toFid = GeoMesaFeatureIndex.idFromBytes(indices.head.sft)
+
     private var i = 0
 
     override protected def append(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+      val fid = toFid(feature.id, 0, feature.id.length, null)
       i = 0
       while (i < values.length) {
         val (mapper, statement, _) = mappers(i)
         values(i) match {
           case kv: SingleRowKeyValue[_] =>
-            val bindings = mapper.bind(kv)
+            val bindings = mapper.bind(kv, fid)
             logger.trace(s"${statement.getQuery} : ${debug(bindings)}")
             ds.session.execute(statement.bind(bindings: _*))
 
           case mkv: MultiRowKeyValue[_] =>
             mkv.split.foreach { kv =>
-              val bindings = mapper.bind(kv)
+              val bindings = mapper.bind(kv, fid)
               logger.trace(s"${statement.getQuery} : ${debug(bindings)}")
               ds.session.execute(statement.bind(bindings: _*))
             }
@@ -254,18 +252,19 @@ object CassandraIndexAdapter extends LazyLogging {
     }
 
     override protected def delete(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+      val fid = toFid(feature.id, 0, feature.id.length, null)
       i = 0
       while (i < values.length) {
         val (mapper, _, statement) = mappers(i)
         values(i) match {
           case kv: SingleRowKeyValue[_] =>
-            val bindings = mapper.bindDelete(kv)
+            val bindings = mapper.bindDelete(kv, fid)
             logger.trace(s"${statement.getQuery} : ${debug(bindings)}")
             ds.session.execute(statement.bind(bindings: _*))
 
           case mkv: MultiRowKeyValue[_] =>
             mkv.split.foreach { kv =>
-              val bindings = mapper.bindDelete(kv)
+              val bindings = mapper.bindDelete(kv, fid)
               logger.trace(s"${statement.getQuery} : ${debug(bindings)}")
               ds.session.execute(statement.bind(bindings: _*))
             }

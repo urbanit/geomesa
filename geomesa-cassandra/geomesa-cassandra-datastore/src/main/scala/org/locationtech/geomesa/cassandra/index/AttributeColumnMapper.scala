@@ -15,7 +15,6 @@ import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.index.attribute.AttributeIndexKey
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 object AttributeColumnMapper {
 
@@ -43,20 +42,18 @@ class AttributeColumnMapper(shards: Seq[ColumnSelect]) extends CassandraColumnMa
 
   override val columns: Seq[NamedColumn] = Seq(Shard, Value, Secondary, FeatureId, Feature)
 
-  override def bind(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val AttributeIndexKey(_, v, _) = value.key
     val secondary = ByteBuffer.wrap(value.tier)
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     val Seq(feature) = value.values.map(v => ByteBuffer.wrap(v.value))
     Seq(shard, v, secondary, fid, feature)
   }
 
-  override def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val AttributeIndexKey(_, v, _) = value.key
     val secondary = ByteBuffer.wrap(value.tier)
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     Seq(shard, v, secondary, fid)
   }
 

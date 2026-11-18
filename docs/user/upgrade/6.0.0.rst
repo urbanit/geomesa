@@ -27,6 +27,14 @@ The system properties ``geomesa.cassandra.connection.timeout`` and ``geomesa.cas
 supported. Instead, timeouts can be configured through the driver's own configuration, as described in
 :doc:`/user/cassandra/configuration`.
 
+Cassandra UUID Feature IDs
+--------------------------
+
+Previously, Cassandra schemas using UUID feature ID encoding (``geomesa.fid.uuid``, see
+:doc:`/user/datastores/index_config`) stored feature IDs incorrectly, so features were returned with the wrong IDs and
+could not be queried by ID. This has been fixed, but feature IDs that were already written with UUID encoding can't be
+recovered. Such schemas need to be re-ingested. Schemas that don't use UUID encoding are not affected.
+
 NiFi Version Support
 --------------------
 

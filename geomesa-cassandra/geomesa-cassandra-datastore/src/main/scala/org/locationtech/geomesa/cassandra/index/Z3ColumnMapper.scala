@@ -15,7 +15,6 @@ import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.index.z3.Z3IndexKey
 
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 
 object Z3ColumnMapper {
 
@@ -43,18 +42,16 @@ class Z3ColumnMapper(shards: Seq[ColumnSelect]) extends CassandraColumnMapper {
 
   override val columns: Seq[NamedColumn] = Seq(Shard, Period, ZValue, FeatureId, Feature)
 
-  override def bind(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bind(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val Z3IndexKey(bin, z) = value.key
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     val Seq(feature) = value.values.map(v => ByteBuffer.wrap(v.value))
     Seq(shard, Short.box(bin), Long.box(z), fid, feature)
   }
 
-  override def bindDelete(value: SingleRowKeyValue[_]): Seq[AnyRef] = {
+  override def bindDelete(value: SingleRowKeyValue[_], fid: String): Seq[AnyRef] = {
     val shard = Byte.box(if (value.shard.isEmpty) { 0 } else { value.shard.head })
     val Z3IndexKey(bin, z) = value.key
-    val fid = new String(value.id, StandardCharsets.UTF_8)
     Seq(shard, Short.box(bin), Long.box(z), fid)
   }
 
